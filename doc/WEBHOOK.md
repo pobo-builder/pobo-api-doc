@@ -13,16 +13,20 @@ Webhook **neobsahuje data**, pouze vás informuje, že se něco změnilo.
 
 ## Rychlý start
 
-1. Spusťte `make build` pro sestavení a spuštění Docker ima
-2. Spusťte `make proxy` pro vytvoření veřejné URL pomocí Cloudflare Tunnel (https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/run-tunnel/trycloudflare/)
-3. Přihlaste se do administrace
-4. Jděte do **Nastavení → Webhooky**
-5. Klikněte **Vytvořit webhook**
-6. V http://localhost:3002/merchant/setting/webhook nastavte nový webhook:
-    - **URL**: `https://xxx.xxx.xxx.trycloudflare.com`
-    - **Event**: `Products.update` nebo `Categories.update`
-7. **Zkopírujte webhook secret** s dashboardu a vložte do kódu (`src/index.php`)
-8. Klikněte na **Test webhook** v administraci
+1. Spusťte `make build` pro sestavení a spuštění Docker image
+2. Spusťte `make proxy` pro vytvoření veřejné URL pomocí [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/run-tunnel/trycloudflare/)
+3. Přihlaste se do [administrace](http://client.pobo.space)
+4. Jděte do [Nastavení → Webhook API](http://client.pobo.space/merchant/setting/webhook)
+5. Klikněte **Regenerovat**
+6. Nastavte nový webhook:
+    - **URL**: `https://xxx.xxx.xxx.trycloudflare.com` (pro otestování) nebo `https://vase-domena.cz/webhook.php` (pro produkci)
+    - **Event zvolte**: `Products.update` nebo `Categories.update`
+7. Zkopírujte **Webhook Secret** a vložte jej proměnné `$webhookSecret` v kódu `src/index.php`.
+8. Klikněte na **Test webhook** u daného webhooku
+9. Zkontrolujte `logs/webhook.log` - měli byste vidět přijatý webhook (případně `make tail` pro sledování v reálném čase)
+
+![Webhooky](images/ui-setting-webhook.png)
+
 ---
 
 ## Struktura webhooku
@@ -298,11 +302,12 @@ heavyProcessing();
 
 ## Podporované události
 
-| Event | Kdy se vyvolá |
-|-------|---------------|
-| `Products.update` | Když uživatel klikne "Odeslat webhook produktů" |
-| `Categories.update` | Když uživatel klikne "Odeslat webhook kategorií" |
+| Event | Kdy se vyvolá                               |
+|-------|---------------------------------------------|
+| `Products.update` | Když uživatel klikne "Exportovat produkty"  |
+| `Categories.update` | Když uživatel klikne "Exportovat kategorie" |
 
+![Webhooky](images/ui-export-webhook.png)
 ---
 
 ## Podpora
