@@ -3,6 +3,9 @@ build:
 	docker compose up -d
 	docker compose exec pobo-webhook-php composer install
 
+shell:
+	docker compose exec -it pobo-webhook-php bash
+
 tail:
 	tail -f logs/webhook.log
 
@@ -17,3 +20,9 @@ open-api:
 	MINGW*|CYGWIN*) start http://localhost:8080 ;; \
 	*) echo "Cannot detect OS to open browser automatically";; \
 	esac
+
+run-import:
+	docker compose exec pobo-webhook-php php src/import.php
+
+run-export:
+	docker compose exec pobo-webhook-php php src/export.php

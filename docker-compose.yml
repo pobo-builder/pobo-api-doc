@@ -22,6 +22,7 @@ services:
       - ./src:/var/www/html/src
       - ./logs:/var/www/html/logs
       - ./vendor:/var/www/html/vendor
+      - ./.env:/var/www/html/.env
     working_dir: /var/www/html
     networks:
       - pobo-webhook-network

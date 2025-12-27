@@ -1,46 +1,86 @@
-# Návod na zpracování webhooků (PHP)
+# Webhook Processing Guide (PHP SDK)
 
-Tento návod vysvětluje, jak přijímat a ověřovat webhooky z naší platformy.
-
----
-
-## Co je webhook?
-
-Webhook je HTTP POST notifikace, kterou vám pošleme, když dojde k události (např. aktualizace produktů nebo kategorií).
-Webhook **neobsahuje data**, pouze vás informuje, že se něco změnilo.
+This guide explains how to receive and verify webhooks from our platform using the official PHP SDK.
 
 ---
 
-## Rychlý start
+## What is a Webhook?
 
-1. Spusťte `make build` pro sestavení a spuštění Docker image
-2. Spusťte `make proxy` pro vytvoření veřejné URL pomocí [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/run-tunnel/trycloudflare/)
-3. Přihlaste se do [administrace](http://client.pobo.space)
-4. Jděte do [Nastavení → Webhook API](http://client.pobo.space/merchant/setting/webhook)
-5. Klikněte **Regenerovat**
-6. Nastavte nový webhook:
-    - **URL**: `https://xxx.xxx.xxx.trycloudflare.com` (pro otestování) nebo `https://vase-domena.cz/webhook.php` (pro produkci)
-    - **Event zvolte**: `Products.update` nebo `Categories.update`
-7. Zkopírujte **Webhook Secret** a vložte jej proměnné `$webhookSecret` v kódu `src/index.php`.
-8. Klikněte na **Test webhook** u daného webhooku
-9. Zkontrolujte `logs/webhook.log` - měli byste vidět přijatý webhook (případně `make tail` pro sledování v reálném čase)
-
-![Webhooky](images/ui-setting-webhook.png)
+A webhook is an HTTP POST notification that we send when an event occurs (e.g., products or categories update).
+Webhook **does not contain data**, it only informs you that something has changed.
 
 ---
 
-## Struktura webhooku
+## Quick Start
+
+### 1. SDK Installation
+
+```bash
+composer require pobo-builder/php-sdk
+```
+
+### 2. Setting up Webhook in Administration
+
+1. Log in to [administration](http://client.pobo.space)
+2. Go to [Settings → Webhook API](http://client.pobo.space/merchant/setting/webhook)
+3. Click **Regenerate**
+4. Configure webhook:
+    - **URL**: `https://your-domain.com/webhook.php`
+    - **Event**: `Products.update` or `Categories.update`
+5. Copy the **Webhook Secret**
+
+### 3. Implementation
+
+```php
+<?php
+// webhook.php
+
+require_once __DIR__ . '/vendor/autoload.php';
+
+use Pobo\Sdk\WebhookHandler;
+use Pobo\Sdk\Enum\WebhookEvent;
+use Pobo\Sdk\Exception\WebhookException;
+
+$webhookSecret = 'your_webhook_secret_from_administration';
+
+$handler = new WebhookHandler(webhookSecret: $webhookSecret);
+
+try {
+    // Automatic signature verification and parsing
+    $payload = $handler->handleFromGlobals();
+
+    // Immediate response (within 10 seconds!)
+    http_response_code(200);
+    echo json_encode(['status' => 'ok']);
+
+    // Process the event
+    match ($payload->event) {
+        WebhookEvent::PRODUCTS_UPDATE => syncProducts(),
+        WebhookEvent::CATEGORIES_UPDATE => syncCategories(),
+    };
+
+} catch (WebhookException $e) {
+    http_response_code(401);
+    echo json_encode(['error' => $e->getMessage()]);
+}
+```
+
+---
+
+## Webhook Structure
 
 ### HTTP Request
+
 ```http
 POST /webhook.php HTTP/1.1
-Host: vase-domena.cz
+Host: your-domain.com
 Content-Type: application/json
 X-Webhook-Signature: a3f2b1c8d9e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1
 X-Webhook-Event: Products.update
 ```
 
 ### JSON Payload
+
 ```json
 {
   "event": "Products.update",
@@ -49,274 +89,271 @@ X-Webhook-Event: Products.update
 }
 ```
 
-### Pole
+### Fields
 
-| Pole | Typ | Popis |
-|------|-----|-------|
-| `event` | string | Typ události (`Products.update`, `Categories.update`) |
-| `timestamp` | string (ISO 8601) | Čas kdy událost nastala |
-| `eshop_id` | integer | ID vašeho e-shopu |
+| Field       | Type               | Description                                        |
+|-------------|--------------------|----------------------------------------------------|
+| `event`     | string             | Event type (`Products.update`, `Categories.update`) |
+| `timestamp` | string (ISO 8601)  | Time when the event occurred                       |
+| `eshop_id`  | integer            | Your e-shop ID                                     |
 
 ---
 
-## Ověření podpisu (DŮLEŽITÉ!)
+## WebhookHandler
 
-Webhook **MUSÍTE** ověřit pomocí HMAC podpisu, aby nikdo nemohl podvrhnout falešné webhooky.
+SDK provides `WebhookHandler` for automatic verification and parsing of webhooks:
 
-### Jak to funguje?
-
-1. My vytvoříme HMAC-SHA256 podpis z payloadu pomocí vašeho **webhook secret**
-2. Tento podpis pošleme v hlavičce `X-Webhook-Signature`
-3. Vy vypočítáte stejný podpis a porovnáte
-
-### Implementace
 ```php
 <?php
 
-// Váš webhook secret (zkopírujte z administrace)
-define('WEBHOOK_SECRET', 'zde_vložte_váš_secret_z_administrace');
+use Pobo\Sdk\WebhookHandler;
+use Pobo\Sdk\Exception\WebhookException;
 
-// Získej raw payload (PŘED parse JSON!)
-$payload = file_get_contents('php://input');
+$handler = new WebhookHandler(webhookSecret: 'your_secret');
 
-// Získej podpis z hlavičky
-$receivedSignature = $_SERVER['HTTP_X_WEBHOOK_SIGNATURE'] ?? '';
-
-// Vypočítej očekávaný podpis
-$calculatedSignature = hash_hmac('sha256', $payload, WEBHOOK_SECRET);
-
-// Porovnej podpisy (VŽDY použij hash_equals!)
-if (!hash_equals($calculatedSignature, $receivedSignature)) {
-    // Neplatný podpis = falešný webhook
-    http_response_code(401);
-    die('Invalid signature');
+// Option 1: Automatic processing from PHP globals
+try {
+    $payload = $handler->handleFromGlobals();
+} catch (WebhookException $e) {
+    // Invalid signature, missing data, unknown event...
 }
 
-// Podpis je OK, můžete pokračovat
-$data = json_decode($payload, true);
+// Option 2: Manual processing
+try {
+    $payload = $handler->handle(
+        payload: file_get_contents('php://input'),
+        signature: $_SERVER['HTTP_X_WEBHOOK_SIGNATURE'] ?? ''
+    );
+} catch (WebhookException $e) {
+    // Handle error
+}
 ```
 
-**⚠️ DŮLEŽITÉ:**
-- Použijte `hash_equals()` místo `==` (ochrana proti timing attacks)
-- Počítejte podpis z **raw payloadu**, ne z parsovaného JSON
-- Secret uchovávejte v tajnosti (mimo Git)
+### WebhookPayload
+
+```php
+$payload->event;     // WebhookEvent enum (PRODUCTS_UPDATE, CATEGORIES_UPDATE)
+$payload->timestamp; // DateTimeInterface
+$payload->eshopId;   // int
+```
 
 ---
 
-## Kompletní příklad
+## Complete Example
+
 ```php
 <?php
 // webhook.php
 
-// ========================================
-// KONFIGURACE
-// ========================================
+declare(strict_types=1);
 
-define('WEBHOOK_SECRET', 'zde_vložte_váš_secret_z_administrace');
+require_once __DIR__ . '/vendor/autoload.php';
 
-// ========================================
-// FUNKCE
-// ========================================
+use Pobo\Sdk\WebhookHandler;
+use Pobo\Sdk\PoboClient;
+use Pobo\Sdk\Enum\WebhookEvent;
+use Pobo\Sdk\Exception\WebhookException;
+
+// Configuration
+$webhookSecret = 'your_webhook_secret';
+$apiToken = 'your_api_token';
+
+// Initialization
+$handler = new WebhookHandler(webhookSecret: $webhookSecret);
+$client = new PoboClient(apiToken: $apiToken);
 
 /**
- * Ověří HMAC podpis webhooku
+ * Sync products
  */
-function verifyWebhookSignature($payload, $signature, $secret) {
-    $calculatedSignature = hash_hmac('sha256', $payload, $secret);
-    return hash_equals($calculatedSignature, $signature);
+function syncProducts(PoboClient $client): void
+{
+    foreach ($client->iterateProducts() as $product) {
+        // Update product in local database
+        updateLocalProduct($product);
+    }
 }
 
 /**
- * Loguje zprávy do souboru
+ * Sync categories
  */
-function logWebhook($message) {
-    $timestamp = date('Y-m-d H:i:s');
-    file_put_contents('webhook.log', "[$timestamp] $message\n", FILE_APPEND);
+function syncCategories(PoboClient $client): void
+{
+    foreach ($client->iterateCategories() as $category) {
+        // Update category in local database
+        updateLocalCategory($category);
+    }
 }
 
-// ========================================
-// HLAVNÍ KÓD
-// ========================================
-
+// Process webhook
 try {
-    // 1. Získej raw payload a podpis
-    $payload = file_get_contents('php://input');
-    $signature = $_SERVER['HTTP_X_WEBHOOK_SIGNATURE'] ?? '';
-    
-    logWebhook("Webhook received");
-    
-    // 2. Ověř podpis
-    if (!verifyWebhookSignature($payload, $signature, WEBHOOK_SECRET)) {
-        http_response_code(401);
-        logWebhook("ERROR: Invalid signature");
-        die('Invalid signature');
-    }
-    
-    logWebhook("Signature verified");
-    
-    // 3. Parsuj JSON
-    $data = json_decode($payload, true);
-    
-    if (!$data) {
-        http_response_code(400);
-        logWebhook("ERROR: Invalid JSON");
-        die('Invalid JSON');
-    }
-    
-    $event = $data['event'];
-    $eshopId = $data['eshop_id'];
-    $timestamp = $data['timestamp'];
-    
-    logWebhook("Event: $event, Eshop: $eshopId");
-    
-    // 4. Okamžitě odpověz (do 10 sekund!)
+    $payload = $handler->handleFromGlobals();
+
+    // Immediate response
     http_response_code(200);
-    echo 'OK';
-    
-    // Zavři spojení s klientem
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'ok', 'event' => $payload->event->value]);
+
+    // Close connection for long processing
     if (function_exists('fastcgi_finish_request')) {
         fastcgi_finish_request();
     }
-    
-    // 5. Zpracuj webhook podle typu
-    switch ($event) {
-        case 'Products.update':
-            logWebhook("Processing product update");
-            // Zde zpracujte aktualizaci produktů
-            break;
-            
-        case 'Categories.update':
-            logWebhook("Processing category update");
-            // Zde zpracujte aktualizaci kategorií
-            break;
-            
-        default:
-            logWebhook("Unknown event: $event");
-    }
-    
-    logWebhook("Webhook processed successfully");
-    
-} catch (Exception $e) {
-    logWebhook("ERROR: " . $e->getMessage());
-    http_response_code(500);
+
+    // Process based on event type
+    match ($payload->event) {
+        WebhookEvent::PRODUCTS_UPDATE => syncProducts($client),
+        WebhookEvent::CATEGORIES_UPDATE => syncCategories($client),
+    };
+
+} catch (WebhookException $e) {
+    http_response_code(401);
+    header('Content-Type: application/json');
+    echo json_encode(['error' => $e->getMessage()]);
 }
 ```
 
 ---
 
-## Důležité poznámky
+## Manual Signature Verification
 
-### ✅ Vždy odpovězte rychle (do 10 sekund)
+If you need to verify the signature manually:
 
-Webhook **MUSÍ** dostat odpověď 200 do 10 sekund, jinak se bude opakovat.
 ```php
-// SPRÁVNĚ
+<?php
+
+use Pobo\Sdk\WebhookHandler;
+
+$handler = new WebhookHandler(webhookSecret: 'your_secret');
+
+$payload = file_get_contents('php://input');
+$signature = $_SERVER['HTTP_X_WEBHOOK_SIGNATURE'] ?? '';
+
+// Only verify signature (returns bool)
+$isValid = $handler->verifySignature($payload, $signature);
+
+if ($isValid === false) {
+    http_response_code(401);
+    die('Invalid signature');
+}
+
+// Signature is OK, process the data
+$data = json_decode($payload, true);
+```
+
+---
+
+## Important Notes
+
+### Always respond quickly (within 10 seconds)
+
+Webhook **MUST** receive a 200 response within 10 seconds, otherwise it will be retried.
+
+```php
+// CORRECT - response BEFORE processing
 http_response_code(200);
-echo 'OK';
+echo json_encode(['status' => 'ok']);
 
-// Nyní můžete dlouho zpracovávat
-processData(); // Může trvat i minuty
+// Close connection
+if (function_exists('fastcgi_finish_request')) {
+    fastcgi_finish_request();
+}
+
+// Only then long processing
+syncProducts($client);
 ```
 
-### ✅ Uchovávejte secret v tajnosti
+### Keep the secret confidential
+
 ```php
-// ŠPATNĚ - secret přímo v kódu
-define('WEBHOOK_SECRET', 'abc123...');
+// WRONG - secret directly in code
+$secret = 'abc123...';
 
-// SPRÁVNĚ - secret v config souboru
-$config = include '/etc/webhook-config.php';
-define('WEBHOOK_SECRET', $config['secret']);
+// CORRECT - in environment variable
+$secret = getenv('WEBHOOK_SECRET');
 
-// NEBO v environment proměnné
-define('WEBHOOK_SECRET', getenv('WEBHOOK_SECRET'));
+// OR in config file outside Git
+$config = require '/etc/app/config.php';
+$secret = $config['webhook_secret'];
 ```
 
-### ✅ Logujte všechny pokusy
+---
 
-Pro debugging doporučujeme logovat všechny příchozí webhooky:
+## Exception Types
+
+| Exception          | When it occurs                              |
+|--------------------|---------------------------------------------|
+| `WebhookException` | Invalid signature, missing data, unknown event |
+
 ```php
-function logWebhook($message) {
-    $timestamp = date('Y-m-d H:i:s');
-    file_put_contents('webhook.log', "[$timestamp] $message\n", FILE_APPEND);
+use Pobo\Sdk\Exception\WebhookException;
+
+try {
+    $payload = $handler->handleFromGlobals();
+} catch (WebhookException $e) {
+    // $e->getMessage() contains error description:
+    // - "Missing webhook signature header"
+    // - "Invalid webhook signature"
+    // - "Invalid webhook payload - could not parse JSON"
+    // - "Unknown webhook event: XYZ"
 }
 ```
 
 ---
 
-## Testování
+## Testing
 
-### 1. Test z administrace
+### 1. Test from Administration
 
-V administraci klikněte na **Test webhook** - měli byste vidět v `webhook.log`:
-```
-[2025-10-15 14:30:00] Webhook received
-[2025-10-15 14:30:00] Signature verified
-[2025-10-15 14:30:00] Event: Products.update, Eshop: 123
-[2025-10-15 14:30:00] Webhook processed successfully
-```
+In administration click on **Test webhook**.
 
-### 2. Manuální test pomocí cURL
+### 2. Manual Test Using cURL
+
 ```bash
-# Vygenerujte test podpis
-SECRET="váš_secret"
+# Generate test signature
+SECRET="your_secret"
 PAYLOAD='{"event":"Products.update","timestamp":"2025-10-15T14:30:00Z","eshop_id":123}'
 SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" | cut -d' ' -f2)
 
-# Pošlete test webhook
-curl -X POST https://vase-domena.cz/webhook.php \
+# Send test webhook
+curl -X POST https://your-domain.com/webhook.php \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Signature: $SIGNATURE" \
-  -H "X-Webhook-Event: Products.update" \
   -d "$PAYLOAD"
 ```
 
 ---
 
-## Možné chyby
+## Supported Events
+
+| Event               | When triggered                              |
+|---------------------|---------------------------------------------|
+| `Products.update`   | When user clicks "Export products"          |
+| `Categories.update` | When user clicks "Export categories"        |
+
+---
+
+## Possible Errors
 
 ### `401 Invalid signature`
 
-**Příčina:** Nesprávný webhook secret nebo chyba ve výpočtu podpisu
+**Cause:** Incorrect webhook secret or corrupted payload
 
-**Řešení:**
-- Zkontrolujte, že máte správný secret z administrace
-- Ujistěte se, že počítáte podpis z raw payloadu (před `json_decode`)
-- Použijte `hash_equals()` pro porovnání
+**Solution:**
+- Check that you have the correct secret from administration
+- Make sure the webhook URL is correct
 
 ### `Timeout`
 
-**Příčina:** Váš endpoint neodpověděl do 10 sekund
+**Cause:** Your endpoint did not respond within 10 seconds
 
-**Řešení:**
-```php
-// Odpovězte OKAMŽITĚ
-http_response_code(200);
-echo 'OK';
-fastcgi_finish_request();
-
-// Teprve pak zpracovávejte
-heavyProcessing();
-```
+**Solution:**
+- Respond immediately and process only after `fastcgi_finish_request()`
 
 ---
 
-## Podporované události
+## Support
 
-| Event | Kdy se vyvolá                               |
-|-------|---------------------------------------------|
-| `Products.update` | Když uživatel klikne "Exportovat produkty"  |
-| `Categories.update` | Když uživatel klikne "Exportovat kategorie" |
-
-![Webhooky](images/ui-export-webhook.png)
----
-
-## Podpora
-
-Potřebujete pomoc? Kontaktujte nás:
+Need help? Contact us:
 
 - **Email:** tomas@pobo.cz
-- **Dokumentace k REST API:** https://docs.pobo.space
-
----
-
-**Hotovo!** Nyní byste měli úspěšně přijímat a ověřovat webhooky. 🎉
+- **SDK:** https://github.com/pobo-builder/php-sdk
+- **Packagist:** https://packagist.org/packages/pobo-builder/php-sdk
